@@ -1,8 +1,9 @@
-﻿using API.Data;
+using API.Data;
 using API.Modeles;
 using API.Services;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
+using System.Text;
 
 namespace API.Controllers
 {
@@ -62,10 +63,55 @@ namespace API.Controllers
             currentContext.Orders.Add(order);
             await currentContext.SaveChangesAsync();
 
-            // Send Notification (Telegram)
+            // Send Enhanced Notification (Telegram)
             var dbName = _databaseSelector.GetCurrentDatabaseName();
-            var message = $"📦 طلب جديد #{order.Id}\n👤 الاسم: {order.CustomerName}\n💰 المجموع: {order.TotalAmount} دج\n🗄️ قاعدة البيانات: {dbName}";
-            await _notificationService.SendMessageAsync(message);
+            
+            // Build detailed message
+            var messageBuilder = new StringBuilder();
+            messageBuilder.AppendLine("🎉 ═══════════════════");
+            messageBuilder.AppendLine("📦 طلب جديد!");
+            messageBuilder.AppendLine("═══════════════════");
+            messageBuilder.AppendLine();
+            messageBuilder.AppendLine($" رقم الطلب: #{order.Id}");
+            messageBuilder.AppendLine($" الاسم: {order.CustomerName}");
+            messageBuilder.AppendLine($" الهاتف: {order.CustomerPhone}");
+            messageBuilder.AppendLine();
+            messageBuilder.AppendLine(" معلومات التوصيل:");
+            
+            // Get Wilaya and Baladiya names
+            var wilaya = await _primaryContext.Wilayas.FindAsync(order.WilayaId);
+            var baladiya = await _primaryContext.Baladiyas.FindAsync(order.BaladiyaId);
+            
+            messageBuilder.AppendLine($"   • الولاية: {wilaya?.Name ?? order.WilayaId.ToString()}");
+            messageBuilder.AppendLine($"   • البلدية: {baladiya?.Name ?? order.BaladiyaId.ToString()}");
+            messageBuilder.AppendLine($"   • العنوان: {order.Address}");
+            messageBuilder.AppendLine($"   • نوع التوصيل: {(order.DeliveryType == "Home" ? "🏠 توصيل للمنزل" : "🏢 استلام من المكتب")}");
+            messageBuilder.AppendLine();
+            messageBuilder.AppendLine("🛍️ المنتجات:");
+            
+            foreach (var item in order.Items)
+            {
+                var product = await _primaryContext.Products.FindAsync(item.ProductId);
+                var productName = product?.Name ?? "منتج غير معروف";
+                messageBuilder.AppendLine($"   • {productName}");
+                messageBuilder.AppendLine($"     الكمية: {item.Quantity} × {item.UnitPrice} دج");
+                if (!string.IsNullOrEmpty(item.SelectedColor))
+                {
+                    messageBuilder.AppendLine($"     اللون: {item.SelectedColor}");
+                }
+            }
+            
+            messageBuilder.AppendLine();
+            messageBuilder.AppendLine("💰 الملخص المالي:");
+            messageBuilder.AppendLine($"   • المجموع الفرعي: {total} دج");
+            messageBuilder.AppendLine($"   • الشحن: {order.ShippingCost} دج");
+            messageBuilder.AppendLine($"   • الإجمالي: {order.TotalAmount} دج");
+            messageBuilder.AppendLine();
+            messageBuilder.AppendLine($"🗄️ قاعدة البيانات: {dbName}");
+            messageBuilder.AppendLine($"⏰ التاريخ: {order.OrderDate:yyyy-MM-dd HH:mm}");
+            messageBuilder.AppendLine("═══════════════════");
+
+            await _notificationService.SendMessageAsync(messageBuilder.ToString());
 
             return CreatedAtAction("GetOrder", new { id = order.Id }, order);
         }
