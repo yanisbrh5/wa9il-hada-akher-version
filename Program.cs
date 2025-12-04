@@ -1,6 +1,5 @@
 using API.Data;
 using Microsoft.EntityFrameworkCore;
-using System.Text.Json.Serialization; // مهم جداً لهذا السطر
 
 namespace API
 {
@@ -47,25 +46,26 @@ namespace API
             // Background Services
             builder.Services.AddHostedService<API.Services.OrderCleanupService>();
 
-            // ✅ تصحيح مشكلة JSON Loop
-            builder.Services.AddControllers().AddJsonOptions(x =>
-                x.JsonSerializerOptions.ReferenceHandler = ReferenceHandler.IgnoreCycles);
+            // Add Controllers with JSON options to prevent circular references
+            builder.Services.AddControllers().AddJsonOptions(options =>
+            {
+                options.JsonSerializerOptions.ReferenceHandler = System.Text.Json.Serialization.ReferenceHandler.IgnoreCycles;
+                options.JsonSerializerOptions.DefaultIgnoreCondition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull;
+            });
             
             builder.Services.AddEndpointsApiExplorer();
             builder.Services.AddSwaggerGen();
 
-            // CORS Configuration
+            // CORS Configuration - Allow all origins
             builder.Services.AddCors(options =>
             {
-                options.AddPolicy("AllowFrontend",
-                    policy =>
-                    {
-                        // ✅ تصحيح مشكلة CORS (السماح للجميع)
-                        policy.SetIsOriginAllowed(origin => true) 
-                              .AllowAnyHeader()
-                              .AllowAnyMethod()
-                              .AllowCredentials();
-                    });
+                options.AddPolicy("AllowFrontend", policy =>
+                {
+                    policy.SetIsOriginAllowed(origin => true)
+                          .AllowAnyHeader()
+                          .AllowAnyMethod()
+                          .AllowCredentials();
+                });
             });
 
             var app = builder.Build();
@@ -80,7 +80,7 @@ namespace API
             app.UseHttpsRedirection();
             app.UseStaticFiles();
 
-            // Use CORS
+            // Use CORS - MUST be before Authorization
             app.UseCors("AllowFrontend");
 
             app.UseAuthorization();
