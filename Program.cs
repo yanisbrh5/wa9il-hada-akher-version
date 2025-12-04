@@ -1,5 +1,6 @@
 using API.Data;
 using Microsoft.EntityFrameworkCore;
+using System.Text.Json.Serialization; // مهم جداً لهذا السطر
 
 namespace API
 {
@@ -46,9 +47,10 @@ namespace API
             // Background Services
             builder.Services.AddHostedService<API.Services.OrderCleanupService>();
 
-            builder.Services.AddControllers();
+            // ✅ تصحيح مشكلة JSON Loop
+            builder.Services.AddControllers().AddJsonOptions(x =>
+                x.JsonSerializerOptions.ReferenceHandler = ReferenceHandler.IgnoreCycles);
             
-            // Learn more about configuring Swagger/OpenAPI at https://aka.ms/aspnetcore/swashbuckle
             builder.Services.AddEndpointsApiExplorer();
             builder.Services.AddSwaggerGen();
 
@@ -58,7 +60,8 @@ namespace API
                 options.AddPolicy("AllowFrontend",
                     policy =>
                     {
-                        policy.WithOrigins(origin => true)
+                        // ✅ تصحيح مشكلة CORS (السماح للجميع)
+                        policy.SetIsOriginAllowed(origin => true) 
                               .AllowAnyHeader()
                               .AllowAnyMethod()
                               .AllowCredentials();
@@ -84,7 +87,7 @@ namespace API
 
             app.MapControllers();
 
-            // Health check endpoints for UptimeRobot - Allow GET, HEAD, POST to avoid 405 errors
+            // Health check endpoints
             app.MapMethods("/", new[] { "GET", "HEAD", "POST" }, () => "API is running!");
             app.MapMethods("/health", new[] { "GET", "HEAD", "POST" }, () => Results.Ok("Healthy"));
             app.MapMethods("/api", new[] { "GET", "HEAD", "POST" }, () => "API Root");
@@ -97,19 +100,13 @@ namespace API
                 var context2 = services.GetRequiredService<API.Data.StoreContext2>();
                 try
                 {
-                    // Apply migrations automatically
                     context.Database.Migrate();
                     context2.Database.Migrate();
                     Console.WriteLine("✅ Database 1 & 2 connections successful!");
-                    Console.WriteLine("✅ Migrations applied successfully!");
                 }
                 catch (Exception ex)
                 {
                     Console.WriteLine($"❌ Database connection failed: {ex.Message}");
-                    if (ex.InnerException != null)
-                    {
-                        Console.WriteLine($"   Inner Error: {ex.InnerException.Message}");
-                    }
                 }
             }
 
