@@ -1,143 +1,116 @@
 using API.Data;
-using API.Modeles;
-using API.Services;
-using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
-using System.Text;
+using System.Text.Json.Serialization; // مهم جداً لهذا السطر
 
-namespace API.Controllers
+namespace API
 {
-    [Route("api/[controller]")]
-    [ApiController]
-    public class OrdersController : ControllerBase
+    public class Program
     {
-        private readonly IDatabaseSelector _databaseSelector;
-        private readonly INotificationService _notificationService;
-        private readonly StoreContext _primaryContext;
-
-        public OrdersController(
-            IDatabaseSelector databaseSelector,
-            INotificationService notificationService,
-            StoreContext primaryContext)
+        public static void Main(string[] args)
         {
-            _databaseSelector = databaseSelector;
-            _notificationService = notificationService;
-            _primaryContext = primaryContext;
-        }
+            var builder = WebApplication.CreateBuilder(args);
 
-        [HttpPost]
-        public async Task<ActionResult<Order>> PostOrder(Order order)
-        {
-            // Calculate totals (server-side validation) - use primary context for reference data
-            decimal total = 0;
-            foreach (var item in order.Items)
+            // Configure Port for Render/Cloud Hosting
+            var port = Environment.GetEnvironmentVariable("PORT") ?? "5214";
+            builder.WebHost.UseUrls($"http://*:{port}");
+
+            // Add services to the container.
+            
+            // Configure Database Settings
+            builder.Services.Configure<API.Models.DatabaseSettings>(
+                builder.Configuration.GetSection("DatabaseSettings"));
+            builder.Services.Configure<API.Models.CleanupSettings>(
+                builder.Configuration.GetSection("CleanupSettings"));
+
+            // Get connection strings
+            var db1ConnectionString = Environment.GetEnvironmentVariable("DB1_CONNECTION_STRING") ?? 
+                                       builder.Configuration.GetConnectionString("Database1");
+            var db2ConnectionString = Environment.GetEnvironmentVariable("DB2_CONNECTION_STRING") ?? 
+                                       builder.Configuration.GetConnectionString("Database2");
+
+            // Register both database contexts
+            builder.Services.AddDbContext<StoreContext>(options =>
+                options.UseNpgsql(db1ConnectionString));
+
+            builder.Services.AddDbContext<API.Data.StoreContext2>(options =>
+                options.UseNpgsql(db2ConnectionString));
+
+            // Database Selector Service
+            builder.Services.AddScoped<API.Services.IDatabaseSelector, API.Services.DatabaseSelector>();
+
+            // Notification Service (Telegram)
+            builder.Services.AddScoped<API.Services.INotificationService, API.Services.TelegramNotificationService>();
+            
+            // Photo Service (Cloudinary)
+            builder.Services.AddScoped<API.Services.IPhotoService, API.Services.PhotoService>();
+
+            // Background Services
+            builder.Services.AddHostedService<API.Services.OrderCleanupService>();
+
+            // ✅ تصحيح مشكلة JSON Loop
+            builder.Services.AddControllers().AddJsonOptions(x =>
+                x.JsonSerializerOptions.ReferenceHandler = ReferenceHandler.IgnoreCycles);
+            
+            builder.Services.AddEndpointsApiExplorer();
+            builder.Services.AddSwaggerGen();
+
+            // CORS Configuration
+            builder.Services.AddCors(options =>
             {
-                var product = await _primaryContext.Products.FindAsync(item.ProductId);
-                if (product != null)
-                {
-                    item.UnitPrice = product.Price;
-                    total += item.Quantity * item.UnitPrice;
-                }
-            }
-
-            // Get shipping cost from primary context
-            var rate = await _primaryContext.ShippingRates.FirstOrDefaultAsync(r => r.BaladiyaId == order.BaladiyaId);
-            
-            if (rate != null)
-            {
-                order.ShippingCost = order.DeliveryType == "Desk" ? rate.DeskPrice : rate.HomePrice;
-            }
-            else
-            {
-                order.ShippingCost = 0;
-            }
-
-            order.TotalAmount = total + order.ShippingCost;
-            order.OrderDate = DateTime.UtcNow;
-
-            // Get current database context and check if rotation is needed
-            await _databaseSelector.CheckAndRotateIfNeededAsync();
-            var currentContext = _databaseSelector.GetCurrentContext();
-
-            // Add order to current database
-            currentContext.Orders.Add(order);
-            await currentContext.SaveChangesAsync();
-
-            // Send Enhanced Notification (Telegram)
-            var dbName = _databaseSelector.GetCurrentDatabaseName();
-            
-            // Build detailed message
-            var messageBuilder = new StringBuilder();
-            messageBuilder.AppendLine("🎉 ═══════════════════");
-            messageBuilder.AppendLine("📦 طلب جديد!");
-            messageBuilder.AppendLine("═══════════════════");
-            messageBuilder.AppendLine();
-            messageBuilder.AppendLine($" رقم الطلب: #{order.Id}");
-            messageBuilder.AppendLine($" الاسم: {order.CustomerName}");
-            messageBuilder.AppendLine($" الهاتف: {order.CustomerPhone}");
-            messageBuilder.AppendLine();
-            messageBuilder.AppendLine(" معلومات التوصيل:");
-            
-            // Get Wilaya and Baladiya names
-            var wilaya = await _primaryContext.Wilayas.FindAsync(order.WilayaId);
-            var baladiya = await _primaryContext.Baladiyas.FindAsync(order.BaladiyaId);
-            
-            messageBuilder.AppendLine($"   • الولاية: {wilaya?.Name ?? order.WilayaId.ToString()}");
-            messageBuilder.AppendLine($"   • البلدية: {baladiya?.Name ?? order.BaladiyaId.ToString()}");
-            messageBuilder.AppendLine($"   • العنوان: {order.Address}");
-            messageBuilder.AppendLine($"   • نوع التوصيل: {(order.DeliveryType == "Home" ? "🏠 توصيل للمنزل" : "🏢 استلام من المكتب")}");
-            messageBuilder.AppendLine();
-            messageBuilder.AppendLine("🛍️ المنتجات:");
-            
-            foreach (var item in order.Items)
-            {
-                var product = await _primaryContext.Products.FindAsync(item.ProductId);
-                var productName = product?.Name ?? "منتج غير معروف";
-                messageBuilder.AppendLine($"   • {productName}");
-                messageBuilder.AppendLine($"     الكمية: {item.Quantity} × {item.UnitPrice} دج");
-                if (!string.IsNullOrEmpty(item.SelectedColor))
-                {
-                    messageBuilder.AppendLine($"     اللون: {item.SelectedColor}");
-                }
-            }
-            
-            messageBuilder.AppendLine();
-            messageBuilder.AppendLine("💰 الملخص المالي:");
-            messageBuilder.AppendLine($"   • المجموع الفرعي: {total} دج");
-            messageBuilder.AppendLine($"   • الشحن: {order.ShippingCost} دج");
-            messageBuilder.AppendLine($"   • الإجمالي: {order.TotalAmount} دج");
-            messageBuilder.AppendLine();
-            messageBuilder.AppendLine($"🗄️ قاعدة البيانات: {dbName}");
-            messageBuilder.AppendLine($"⏰ التاريخ: {order.OrderDate:yyyy-MM-dd HH:mm}");
-            messageBuilder.AppendLine("═══════════════════");
-
-            await _notificationService.SendMessageAsync(messageBuilder.ToString());
-
-            return CreatedAtAction("GetOrder", new { id = order.Id }, order);
-        }
-
-        [HttpGet("{id}")]
-        public async Task<ActionResult<Order>> GetOrder(int id)
-        {
-            // Search across all databases
-            foreach (var context in _databaseSelector.GetAllContexts())
-            {
-                var order = await context.Orders
-                    .Include(o => o.Items)
-                    .FirstOrDefaultAsync(o => o.Id == id);
-
-                if (order != null)
-                {
-                    // Load product details from primary context
-                    foreach (var item in order.Items)
+                options.AddPolicy("AllowFrontend",
+                    policy =>
                     {
-                        item.Product = await _primaryContext.Products.FindAsync(item.ProductId);
-                    }
-                    return order;
+                        // ✅ تصحيح مشكلة CORS (السماح للجميع)
+                        policy.SetIsOriginAllowed(origin => true) 
+                              .AllowAnyHeader()
+                              .AllowAnyMethod()
+                              .AllowCredentials();
+                    });
+            });
+
+            var app = builder.Build();
+
+            // Configure the HTTP request pipeline.
+            if (app.Environment.IsDevelopment())
+            {
+                app.UseSwagger();
+                app.UseSwaggerUI();
+            }
+
+            app.UseHttpsRedirection();
+            app.UseStaticFiles();
+
+            // Use CORS
+            app.UseCors("AllowFrontend");
+
+            app.UseAuthorization();
+
+            app.MapControllers();
+
+            // Health check endpoints
+            app.MapMethods("/", new[] { "GET", "HEAD", "POST" }, () => "API is running!");
+            app.MapMethods("/health", new[] { "GET", "HEAD", "POST" }, () => Results.Ok("Healthy"));
+            app.MapMethods("/api", new[] { "GET", "HEAD", "POST" }, () => "API Root");
+
+            // Database Seeding & Migration
+            using (var scope = app.Services.CreateScope())
+            {
+                var services = scope.ServiceProvider;
+                var context = services.GetRequiredService<StoreContext>();
+                var context2 = services.GetRequiredService<API.Data.StoreContext2>();
+                try
+                {
+                    context.Database.Migrate();
+                    context2.Database.Migrate();
+                    Console.WriteLine("✅ Database 1 & 2 connections successful!");
+                }
+                catch (Exception ex)
+                {
+                    Console.WriteLine($"❌ Database connection failed: {ex.Message}");
                 }
             }
 
-            return NotFound();
+            app.Run();
         }
     }
 }
