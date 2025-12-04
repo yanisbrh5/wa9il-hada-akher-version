@@ -58,7 +58,12 @@ namespace API
                 options.AddPolicy("AllowFrontend",
                     policy =>
                     {
-                        policy.SetIsOriginAllowed(origin => true) // Allow any origin
+                        policy.WithOrigins(
+                                "http://localhost:5173", 
+                                "http://localhost:3000",
+                                "https://elmanaradmincenter.netlify.app",
+                                "https://elmanarstore.netlify.app/" // Assuming store might be here too
+                               )
                               .AllowAnyHeader()
                               .AllowAnyMethod()
                               .AllowCredentials();
