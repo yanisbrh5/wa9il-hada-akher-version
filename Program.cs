@@ -89,7 +89,7 @@ namespace API
             app.MapMethods("/health", new[] { "GET", "HEAD", "POST" }, () => Results.Ok("Healthy"));
             app.MapMethods("/api", new[] { "GET", "HEAD", "POST" }, () => "API Root");
 
-            // Database Seeding
+            // Database Seeding & Migration
             using (var scope = app.Services.CreateScope())
             {
                 var services = scope.ServiceProvider;
@@ -97,9 +97,11 @@ namespace API
                 var context2 = services.GetRequiredService<API.Data.StoreContext2>();
                 try
                 {
-                    context.Database.EnsureCreated();
-                    context2.Database.EnsureCreated();
+                    // Apply migrations automatically
+                    context.Database.Migrate();
+                    context2.Database.Migrate();
                     Console.WriteLine("✅ Database 1 & 2 connections successful!");
+                    Console.WriteLine("✅ Migrations applied successfully!");
                 }
                 catch (Exception ex)
                 {
