@@ -110,11 +110,13 @@ namespace API
                 }
                 catch (Exception ex)
                 {
-                    Console.WriteLine($"❌ Database connection failed: {ex.Message}");
-                    if (ex.InnerException != null)
+                    // Log the error but don't crash — tables might already exist
+                    Console.WriteLine($"⚠️ Migration warning: {ex.Message}");
+                    if (!ex.Message.Contains("already exists"))
                     {
-                        Console.WriteLine($"   Inner Error: {ex.InnerException.Message}");
+                        throw; // Re-throw if it's a different error
                     }
+                    Console.WriteLine("✅ Tables already exist, continuing...");
                 }
             }
 
