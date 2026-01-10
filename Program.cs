@@ -9,9 +9,8 @@ namespace API
         {
             var builder = WebApplication.CreateBuilder(args);
 
-            // Configure Port for Render/Cloud Hosting
-            var port = Environment.GetEnvironmentVariable("PORT") ?? "5214";
-            builder.WebHost.UseUrls($"http://*:{port}");
+            // لا تحدد منفذ معين — اترك ASP.NET يستخدم ASPNETCORE_URLS من البيئة
+            // الـ Dockerfile سيحدد ASPNETCORE_URLS=http://+:8080
 
             // Add services to the container.
             
