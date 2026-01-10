@@ -15,7 +15,7 @@ RUN dotnet publish "API.csproj" -c Release -o /app/publish
 FROM mcr.microsoft.com/dotnet/aspnet:8.0 AS final
 WORKDIR /app
 
-# استعمل المنفذ اللي Koyeb يبعثه (8080 افتراضي)
+# استعمل المنفذ 8080 (اللي Koyeb يتفقد عليه)
 ENV ASPNETCORE_URLS=http://+:8080
 ENV DOTNET_RUNNING_IN_CONTAINER=true
 
