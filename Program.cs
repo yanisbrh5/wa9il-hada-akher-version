@@ -21,11 +21,15 @@ namespace API
             builder.Services.Configure<API.Models.CleanupSettings>(
                 builder.Configuration.GetSection("CleanupSettings"));
 
-            // Get connection strings
-            var db1ConnectionString = Environment.GetEnvironmentVariable("DB1_CONNECTION_STRING") ?? 
-                                       builder.Configuration.GetConnectionString("Database1");
-            var db2ConnectionString = Environment.GetEnvironmentVariable("DB2_CONNECTION_STRING") ?? 
-                                       builder.Configuration.GetConnectionString("Database2");
+            // Get connection strings from environment variables FIRST
+            var db1ConnectionString = Environment.GetEnvironmentVariable("DB1_CONNECTION_STRING");
+            var db2ConnectionString = Environment.GetEnvironmentVariable("DB2_CONNECTION_STRING");
+            
+            // Fallback to appsettings if env vars not set
+            if (string.IsNullOrEmpty(db1ConnectionString))
+                db1ConnectionString = builder.Configuration.GetConnectionString("Database1");
+            if (string.IsNullOrEmpty(db2ConnectionString))
+                db2ConnectionString = builder.Configuration.GetConnectionString("Database2");
 
             // Register both database contexts
             builder.Services.AddDbContext<StoreContext>(options =>
@@ -46,26 +50,24 @@ namespace API
             // Background Services
             builder.Services.AddHostedService<API.Services.OrderCleanupService>();
 
-            // Add Controllers with JSON options to prevent circular references
-            builder.Services.AddControllers().AddJsonOptions(options =>
-            {
-                options.JsonSerializerOptions.ReferenceHandler = System.Text.Json.Serialization.ReferenceHandler.IgnoreCycles;
-                options.JsonSerializerOptions.DefaultIgnoreCondition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull;
-            });
+            builder.Services.AddControllers().AddJsonOptions(x =>
+                x.JsonSerializerOptions.ReferenceHandler = System.Text.Json.Serialization.ReferenceHandler.IgnoreCycles);
             
+            // Learn more about configuring Swagger/OpenAPI at https://aka.ms/aspnetcore/swashbuckle
             builder.Services.AddEndpointsApiExplorer();
             builder.Services.AddSwaggerGen();
 
-            // CORS Configuration - Allow all origins
+            // CORS Configuration
             builder.Services.AddCors(options =>
             {
-                options.AddPolicy("AllowFrontend", policy =>
-                {
-                    policy.SetIsOriginAllowed(origin => true)
-                          .AllowAnyHeader()
-                          .AllowAnyMethod()
-                          .AllowCredentials();
-                });
+                options.AddPolicy("AllowFrontend",
+                    policy =>
+                    {
+                        policy.SetIsOriginAllowed(origin => true) // Allow ANY origin
+                              .AllowAnyHeader()
+                              .AllowAnyMethod()
+                              .AllowCredentials();
+                    });
             });
 
             var app = builder.Build();
@@ -80,14 +82,14 @@ namespace API
             app.UseHttpsRedirection();
             app.UseStaticFiles();
 
-            // Use CORS - MUST be before Authorization
+            // Use CORS
             app.UseCors("AllowFrontend");
 
             app.UseAuthorization();
 
             app.MapControllers();
 
-            // Health check endpoints
+            // Health check endpoints for UptimeRobot - Allow GET, HEAD, POST to avoid 405 errors
             app.MapMethods("/", new[] { "GET", "HEAD", "POST" }, () => "API is running!");
             app.MapMethods("/health", new[] { "GET", "HEAD", "POST" }, () => Results.Ok("Healthy"));
             app.MapMethods("/api", new[] { "GET", "HEAD", "POST" }, () => "API Root");
@@ -100,13 +102,19 @@ namespace API
                 var context2 = services.GetRequiredService<API.Data.StoreContext2>();
                 try
                 {
+                    // Apply migrations automatically
                     context.Database.Migrate();
                     context2.Database.Migrate();
                     Console.WriteLine("✅ Database 1 & 2 connections successful!");
+                    Console.WriteLine("✅ Migrations applied successfully!");
                 }
                 catch (Exception ex)
                 {
                     Console.WriteLine($"❌ Database connection failed: {ex.Message}");
+                    if (ex.InnerException != null)
+                    {
+                        Console.WriteLine($"   Inner Error: {ex.InnerException.Message}");
+                    }
                 }
             }
 
